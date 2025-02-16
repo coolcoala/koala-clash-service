@@ -1,11 +1,14 @@
+mod core;
 mod data;
-mod web;
+mod process;
 
 use self::data::*;
-use self::web::*;
 use tokio::runtime::Runtime;
 use warp::Filter;
 
+#[cfg(target_os = "macos")]
+use clash_verge_service::utils;
+use core::COREMANAGER;
 #[cfg(windows)]
 use std::{ffi::OsString, time::Duration};
 #[cfg(windows)]
@@ -18,8 +21,6 @@ use windows_service::{
     service_control_handler::{self, ServiceControlHandlerResult},
     service_dispatcher, Result,
 };
-#[cfg(target_os = "macos")]
-use clash_verge_service::utils;
 
 #[cfg(windows)]
 const SERVICE_TYPE: ServiceType = ServiceType::OWN_PROCESS;
@@ -71,20 +72,24 @@ pub async fn run_service() -> anyhow::Result<()> {
 
     let api_get_version = warp::get()
         .and(warp::path("version"))
-        .map(move || wrap_response!(get_version()));
+        .map(move || wrap_response!(COREMANAGER.lock().unwrap().get_version()));
+
+    let api_is_healthy = warp::get()
+        .and(warp::path("is_healthy"))
+        .map(move || wrap_response!(COREMANAGER.lock().unwrap().is_healthy()));
 
     let api_start_clash = warp::post()
         .and(warp::path("start_clash"))
         .and(warp::body::json())
-        .map(move |body: StartBody| wrap_response!(start_clash(body)));
+        .map(move |body: StartBody| wrap_response!(COREMANAGER.lock().unwrap().start_clash(body)));
 
     let api_stop_clash = warp::post()
         .and(warp::path("stop_clash"))
-        .map(move || wrap_response!(stop_clash()));
+        .map(move || wrap_response!(COREMANAGER.lock().unwrap().stop_clash()));
 
     let api_get_clash = warp::get()
         .and(warp::path("get_clash"))
-        .map(move || wrap_response!(get_clash()));
+        .map(move || wrap_response!(COREMANAGER.lock().unwrap().get_clash_status()));
 
     let api_stop_service = warp::post()
         .and(warp::path("stop_service"))
@@ -92,6 +97,7 @@ pub async fn run_service() -> anyhow::Result<()> {
 
     warp::serve(
         api_get_version
+            .or(api_is_healthy)
             .or(api_start_clash)
             .or(api_stop_clash)
             .or(api_stop_service)
@@ -137,11 +143,8 @@ fn stop_service() -> anyhow::Result<()> {
     // launchctl stop clash_verge_service
     let _ = utils::run_command(
         "launchctl",
-        &[
-            "stop",
-            "io.github.clash-verge-rev.clash-verge-rev.service"
-        ],
-        true
+        &["stop", "io.github.clash-verge-rev.clash-verge-rev.service"],
+        true,
     );
 
     Ok(())

@@ -37,6 +37,13 @@ jobs:
         if: matrix.os != 'ubuntu-latest'
         uses: dtolnay/rust-toolchain@1.77.0
 
+      - name: Update Rust (for macOS)
+        if: matrix.os == 'macos-latest'
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+          source $HOME/.cargo/env
+          rustup update stable
+
       - name: Add Rust Target
         if: matrix.os != 'ubuntu-latest'
         run: rustup target add ${{ matrix.target }}
@@ -57,6 +64,7 @@ jobs:
           tag_name: ${{ matrix.target }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       - name: CodeSign
         if: matrix.os == 'macos-latest'
         run: |
@@ -67,7 +75,6 @@ jobs:
           security unlock-keychain -p github-actions github-actions.keychain
           security import cert.p12 -k github-actions.keychain -P "${{ secrets.APPLE_CERTIFICATE_PASSWORD }}" -T /usr/bin/codesign
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k github-actions github-actions.keychain
-
 
           # 对服务程序进行签名
           codesign --force \

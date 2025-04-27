@@ -1,3 +1,4 @@
+mod encry;
 mod service;
 
 #[cfg(windows)]

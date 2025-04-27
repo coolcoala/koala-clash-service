@@ -51,11 +51,50 @@ pub mod safety_args {
     }
 }
 
+pub mod safety_encry {
+    use crate::encry::sign::verify_binary_signature;
+    pub fn is_binary_signature_verified(binary_path: &str) -> bool {
+        // if !super::safety_path::is_path_safe(binary_path) {
+        //     println!("[Signature Check] Path is unsafe");
+        //     return false;
+        // }
+
+        // 直接调用并返回验证结果
+        let is_valid = verify_binary_signature(binary_path);
+        if is_valid {
+            println!("[Signature Check] Binary signature is valid");
+        } else {
+            println!("[Signature Check] Binary signature is invalid");
+        }
+        is_valid
+    }
+}
+
+pub mod safey_binary {
+    pub fn is_binary_safe_to_execute(path: &str) -> bool {
+        if !super::safety_path::is_path_safe(path) {
+            println!("[Binary Safety] Path check failed");
+            return false;
+        }
+
+        if !super::safety_encry::is_binary_signature_verified(path) {
+            println!("[Binary Safety] Signature check failed");
+            return false;
+        }
+
+        println!("[Binary Safety] Binary is safe to execute");
+        true
+    }
+}
+
 pub fn spawn_process(command: &str, args: &[&str], mut log: std::fs::File) -> io::Result<u32> {
-    if !safety_path::is_path_safe(command) {
+    if !safey_binary::is_binary_safe_to_execute(command) {
         return Err(io::Error::new(
             io::ErrorKind::PermissionDenied,
-            format!("Unsafe command path: {}", command),
+            format!(
+                "Unsafe command or Invalid signature binary path: {}",
+                command
+            ),
         ));
     }
 
@@ -95,10 +134,13 @@ pub fn spawn_process(command: &str, args: &[&str], mut log: std::fs::File) -> io
 }
 
 pub fn spawn_process_debug(command: &str, args: &[&str]) -> io::Result<(u32, String, i32)> {
-    if !safety_path::is_path_safe(command) {
+    if !safey_binary::is_binary_safe_to_execute(command) {
         return Err(io::Error::new(
             io::ErrorKind::PermissionDenied,
-            format!("Unsafe command path: {}", command),
+            format!(
+                "Unsafe command or Invalid signature binary path: {}",
+                command
+            ),
         ));
     }
 

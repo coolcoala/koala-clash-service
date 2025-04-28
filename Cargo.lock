@@ -149,6 +149,7 @@ dependencies = [
  "once_cell",
  "openssl",
  "parking_lot",
+ "rand",
  "serde",
  "serde_json",
  "sysinfo",

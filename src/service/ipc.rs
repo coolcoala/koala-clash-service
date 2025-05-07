@@ -240,50 +240,50 @@ pub async fn handle_request(request: IpcRequest) -> Result<IpcResponse> {
     }
 }
 
-/// 启动IPC服务器-Win
 #[cfg(target_os = "windows")]
 pub async fn run_ipc_server() -> Result<()> {
     use log::{info, error, warn, debug};
-    use std::os::windows::io::{FromRawHandle, RawHandle};
+    use std::os::windows::ffi::OsStrExt;
+    use std::os::windows::io::{FromRawHandle, AsRawHandle};
     use std::ptr;
-    use std::ffi::CString;
+    use std::ffi::OsStr;
     use std::io::{Read, Write};
     use std::fs::File;
+    use tokio::task::spawn_blocking;
     use tokio::runtime::Runtime;
     use std::sync::Arc;
     
     // 导入必要的Windows API
-    use winapi::um::fileapi::CreateNamedPipeA;
+    use winapi::um::namedpipeapi::{ConnectNamedPipe, CreateNamedPipeW};
     use winapi::um::handleapi::{INVALID_HANDLE_VALUE, CloseHandle};
     use winapi::um::winbase::{
-        FILE_FLAG_OVERLAPPED,
         PIPE_ACCESS_DUPLEX,
         PIPE_READMODE_MESSAGE,
         PIPE_TYPE_MESSAGE,
         PIPE_WAIT,
         PIPE_UNLIMITED_INSTANCES,
         PIPE_REJECT_REMOTE_CLIENTS,
+        FILE_FLAG_OVERLAPPED,
     };
-    use winapi::um::winnt::{HANDLE};
-    
+    use winapi::um::errhandlingapi::GetLastError;
+    use winapi::shared::winerror::ERROR_PIPE_CONNECTED;
+
     info!("正在启动IPC服务器 (Windows) - {}", IPC_SOCKET_NAME);
-    
-    let c_pipe_name = match CString::new(IPC_SOCKET_NAME) {
-        Ok(name) => name,
-        Err(e) => {
-            error!("创建CString失败: {}", e);
-            return Err(anyhow::anyhow!("创建CString失败: {}", e));
-        }
-    };
     
     let runtime = Runtime::new()?;
     let runtime = Arc::new(runtime);
     
     loop {
+        // 创建命名管道
         let pipe_handle = unsafe {
-            CreateNamedPipeA(
-                c_pipe_name.as_ptr(),
-                PIPE_ACCESS_DUPLEX,
+            let wide_name: Vec<u16> = OsStr::new(IPC_SOCKET_NAME)
+                .encode_wide()
+                .chain(Some(0))
+                .collect();
+            
+            CreateNamedPipeW(
+                wide_name.as_ptr(),
+                PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED,  // 添加OVERLAPPED标志以支持异步
                 PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS,
                 PIPE_UNLIMITED_INSTANCES,
                 4096,  // 输出缓冲区大小
@@ -294,47 +294,41 @@ pub async fn run_ipc_server() -> Result<()> {
         };
         
         if pipe_handle == INVALID_HANDLE_VALUE {
-            let error = std::io::Error::last_os_error();
+            let error = unsafe { GetLastError() };
             error!("创建命名管道失败: {}", error);
-            std::thread::sleep(std::time::Duration::from_millis(100));
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
             continue;
         }
         
-        // Windows API连接管道函数
-        use winapi::um::namedpipeapi::ConnectNamedPipe;
-        use winapi::um::winbase::GetLastError;
-        use winapi::shared::winerror::ERROR_PIPE_CONNECTED;
-
+        info!("等待客户端连接...");
+        
+        // 连接管道
         let connect_result = unsafe { ConnectNamedPipe(pipe_handle, ptr::null_mut()) };
         let last_error = unsafe { GetLastError() };
 
         if connect_result == 0 && last_error != ERROR_PIPE_CONNECTED {
-            let error = std::io::Error::last_os_error();
+            let error = unsafe { GetLastError() };
             error!("等待客户端连接失败: {}", error);
             unsafe { CloseHandle(pipe_handle) };
-            std::thread::sleep(std::time::Duration::from_millis(100));
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
             continue;
         }
         
         info!("接受到新的IPC连接");
         
         // 将Windows句柄转换为Rust File对象
-        let pipe_file = unsafe { File::from_raw_handle(pipe_handle as RawHandle) };
+        let mut pipe_file  = unsafe { File::from_raw_handle(pipe_handle as _) };
         
         // 克隆运行时引用
         let runtime_clone = runtime.clone();
         
-        // 创建任务处理这个连接
-        std::thread::spawn(move || -> Result<()> {
+        // 使用spawn_blocking处理阻塞IO
+        spawn_blocking(move || -> Result<()> {
             // 读取消息长度前缀
             let mut len_bytes = [0u8; 4];
-            match pipe_file.read_exact(&mut len_bytes) {
-                Ok(_) => {},
-                Err(e) => {
-                    error!("读取请求长度失败: {}", e);
-                    unsafe { CloseHandle(pipe_handle) };
-                    return Err(anyhow::anyhow!("读取请求长度失败: {}", e));
-                }
+            if let Err(e) = pipe_file.read_exact(&mut len_bytes) {
+                error!("读取请求长度失败: {}", e);
+                return Err(anyhow::anyhow!("读取请求长度失败: {}", e));
             }
             
             let request_len = u32::from_be_bytes(len_bytes) as usize;
@@ -342,13 +336,9 @@ pub async fn run_ipc_server() -> Result<()> {
             
             // 读取消息内容
             let mut request_bytes = vec![0u8; request_len];
-            match pipe_file.read_exact(&mut request_bytes) {
-                Ok(_) => {},
-                Err(e) => {
-                    error!("读取请求内容失败: {}", e);
-                    unsafe { CloseHandle(pipe_handle) };
-                    return Err(anyhow::anyhow!("读取请求内容失败: {}", e));
-                }
+            if let Err(e) = pipe_file.read_exact(&mut request_bytes) {
+                error!("读取请求内容失败: {}", e);
+                return Err(anyhow::anyhow!("读取请求内容失败: {}", e));
             }
             
             // 解析请求
@@ -356,14 +346,12 @@ pub async fn run_ipc_server() -> Result<()> {
                 Ok(req) => req,
                 Err(e) => {
                     error!("无法解析IPC请求: {}", e);
-                    unsafe { CloseHandle(pipe_handle) };
                     return Err(anyhow::anyhow!("无法解析IPC请求: {}", e));
                 }
             };
             
-            // 处理请求
-            let response_future = handle_request(request);
-            let response = runtime_clone.block_on(response_future)?;
+            // 处理请求（在运行时上下文中）
+            let response = runtime_clone.block_on(handle_request(request))?;
             
             // 发送响应
             let response_json = serde_json::to_string(&response)?;
@@ -371,28 +359,23 @@ pub async fn run_ipc_server() -> Result<()> {
             let response_len = response_bytes.len() as u32;
             
             // 写入响应长度
-            match pipe_file.write_all(&response_len.to_be_bytes()) {
-                Ok(_) => {},
-                Err(e) => {
-                    error!("写入响应长度失败: {}", e);
-                    unsafe { CloseHandle(pipe_handle) };
-                    return Err(anyhow::anyhow!("写入响应长度失败: {}", e));
-                }
+            if let Err(e) = pipe_file.write_all(&response_len.to_be_bytes()) {
+                error!("写入响应长度失败: {}", e);
+                return Err(anyhow::anyhow!("写入响应长度失败: {}", e));
             }
             
             // 写入响应内容
-            match pipe_file.write_all(response_bytes) {
-                Ok(_) => {},
-                Err(e) => {
-                    error!("写入响应内容失败: {}", e);
-                    unsafe { CloseHandle(pipe_handle) };
-                    return Err(anyhow::anyhow!("写入响应内容失败: {}", e));
-                }
+            if let Err(e) = pipe_file.write_all(response_bytes) {
+                error!("写入响应内容失败: {}", e);
+                return Err(anyhow::anyhow!("写入响应内容失败: {}", e));
             }
             
-            // 手动关闭管道
-            // 注意：File::drop通常会关闭句柄，但为了确保，我们显式调用CloseHandle
-            unsafe { CloseHandle(pipe_handle) };
+            // 刷新确保数据写入
+            if let Err(e) = pipe_file.flush() {
+                error!("刷新管道失败: {}", e);
+                return Err(anyhow::anyhow!("刷新管道失败: {}", e));
+            }
+            
             Ok(())
         });
     }

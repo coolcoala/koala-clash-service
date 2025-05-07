@@ -20,6 +20,12 @@ pub struct JsonResponse<T: Serialize> {
     pub data: Option<T>,
 }
 
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct VersionResponse {
+    pub service: String,
+    pub version: String,
+}
+
 #[derive(Default, Debug)]
 pub struct ClashStatus {
     pub is_running: Arc<AtomicBool>,

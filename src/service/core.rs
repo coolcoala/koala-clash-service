@@ -1,13 +1,10 @@
 use super::{
-    data::{ClashStatus, CoreManager, MihomoStatus, StartBody, StatusInner},
+    data::{ClashStatus, CoreManager, MihomoStatus, StartBody, StatusInner, VersionResponse},
     process,
 };
 use anyhow::{anyhow, Context, Result};
 use once_cell::sync::Lazy;
-use std::{
-    collections::HashMap,
-    sync::{atomic::Ordering, Arc, Mutex},
-};
+use std::sync::{atomic::Ordering, Arc, Mutex};
 
 impl CoreManager {
     pub fn new() -> Self {
@@ -70,13 +67,14 @@ impl CoreManager {
 }
 
 impl CoreManager {
-    pub fn get_version(&self) -> Result<HashMap<String, String>> {
+    pub fn get_version(&self) -> Result<VersionResponse> {
         let current_pid = std::process::id() as i32;
         println!("Current PID: {}", current_pid);
-        Ok(HashMap::from([
-            ("service".into(), "Clash Verge Service".into()),
-            ("version".into(), env!("CARGO_PKG_VERSION").into()),
-        ]))
+        
+        Ok(VersionResponse {
+            service: "Clash Verge Service".into(),
+            version: env!("CARGO_PKG_VERSION").into(),
+        })
     }
 
     pub fn get_clash_status(&self) -> Result<StartBody> {

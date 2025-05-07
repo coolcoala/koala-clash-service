@@ -1,14 +1,13 @@
 mod core;
 mod data;
 mod process;
+mod ipc;
 
-use self::data::*;
+use self::ipc::run_ipc_server;
 use tokio::runtime::Runtime;
-use warp::Filter;
 
 #[cfg(target_os = "macos")]
 use clash_verge_service::utils;
-use core::COREMANAGER;
 #[cfg(windows)]
 use std::{ffi::OsString, time::Duration};
 #[cfg(windows)]
@@ -26,28 +25,9 @@ use windows_service::{
 const SERVICE_TYPE: ServiceType = ServiceType::OWN_PROCESS;
 #[cfg(not(target_os = "macos"))]
 const SERVICE_NAME: &str = "clash_verge_service";
-const LISTEN_PORT: u16 = 33211;
 
-macro_rules! wrap_response {
-    ($expr: expr) => {
-        match $expr {
-            Ok(data) => warp::reply::json(&JsonResponse {
-                code: 0,
-                msg: "ok".into(),
-                data: Some(data),
-            }),
-            Err(err) => warp::reply::json(&JsonResponse {
-                code: 400,
-                msg: format!("{err}"),
-                data: Option::<()>::None,
-            }),
-        }
-    };
-}
-
-/// The Service
+/// 运行IPC服务
 pub async fn run_service() -> anyhow::Result<()> {
-    // 开启服务 设置服务状态
     #[cfg(windows)]
     let status_handle = service_control_handler::register(
         SERVICE_NAME,
@@ -70,41 +50,12 @@ pub async fn run_service() -> anyhow::Result<()> {
         process_id: None,
     })?;
 
-    let api_get_version = warp::get()
-        .and(warp::path("version"))
-        .map(move || wrap_response!(COREMANAGER.lock().unwrap().get_version()));
-
-    let api_start_clash = warp::post()
-        .and(warp::path("start_clash"))
-        .and(warp::body::json())
-        .map(move |body: StartBody| wrap_response!(COREMANAGER.lock().unwrap().start_clash(body)));
-
-    let api_stop_clash = warp::post()
-        .and(warp::path("stop_clash"))
-        .map(move || wrap_response!(COREMANAGER.lock().unwrap().stop_mihomo()));
-
-    let api_get_clash = warp::get()
-        .and(warp::path("get_clash"))
-        .map(move || wrap_response!(COREMANAGER.lock().unwrap().get_clash_status()));
-
-    let api_stop_service = warp::post()
-        .and(warp::path("stop_service"))
-        .map(|| wrap_response!(stop_service()));
-
-    let api_exit_sys = warp::post()
-        .and(warp::path("exit_sys"))
-        .map(move || wrap_response!(COREMANAGER.lock().unwrap().stop_clash()));
-
-    warp::serve(
-        api_get_version
-            .or(api_start_clash)
-            .or(api_stop_clash)
-            .or(api_stop_service)
-            .or(api_get_clash)
-            .or(api_exit_sys),
-    )
-    .run(([127, 0, 0, 1], LISTEN_PORT))
-    .await;
+    log::info!("启动Clash Verge服务 - IPC模式");
+    
+    // 直接运行IPC服务器
+    if let Err(err) = run_ipc_server().await {
+        log::error!("IPC服务器错误: {}", err);
+    }
 
     Ok(())
 }

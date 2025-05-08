@@ -106,5 +106,6 @@ fn main() -> windows_service::Result<()> {
     }
 
     service.delete()?;
+    println!("Service uninstalled successfully. Resource cleanup warnings can be ignored.");
     Ok(())
 }

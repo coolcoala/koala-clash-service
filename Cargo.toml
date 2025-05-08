@@ -1,6 +1,6 @@
 [package]
 name = "clash-verge-service"
-version = "1.0.7"
+version = "1.0.8"
 edition = "2021"
 authors = ["zzzgydi", "Clash Verge Rev Team"]
 license = "GPL-3.0"
@@ -35,7 +35,7 @@ sha2 = "0.10.9"
 hex = "0.4.3"
 uuid = "1.3.0"
 futures = "0.3.31"
-winapi = { version = "0.3", features = ["namedpipeapi", "handleapi", "winbase", "winnt", "winerror", "errhandlingapi"] }
+winapi = { version = "0.3", features = ["namedpipeapi", "handleapi", "winbase", "winnt", "winerror", "errhandlingapi", "accctrl", "aclapi", "securitybaseapi", "minwinbase", "wingdi"] }
 interprocess = { version = "2.2.3", features = ["tokio"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]

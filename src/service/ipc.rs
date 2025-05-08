@@ -6,6 +6,14 @@ use serde::{Deserialize, Serialize};
 use sha2::Sha256;
 use sha2::digest::Digest;
 use std::time::{SystemTime, UNIX_EPOCH};
+#[cfg(target_os = "windows")]
+use std::os::windows::ffi::OsStrExt;
+#[cfg(target_os = "windows")]
+use std::os::windows::io::FromRawHandle;
+#[cfg(target_os = "windows")]
+use std::ptr;
+#[cfg(target_os = "windows")]
+use std::ffi::OsStr;
 
 /// IPC通信常量
 const IPC_SOCKET_NAME: &str = if cfg!(windows) {
@@ -242,11 +250,7 @@ pub async fn handle_request(request: IpcRequest) -> Result<IpcResponse> {
 
 #[cfg(target_os = "windows")]
 pub async fn run_ipc_server() -> Result<()> {
-    use log::{info, error, warn, debug};
-    use std::os::windows::ffi::OsStrExt;
-    use std::os::windows::io::{FromRawHandle, AsRawHandle};
-    use std::ptr;
-    use std::ffi::OsStr;
+    use log::{info, error, debug};
     use std::io::{Read, Write};
     use std::fs::File;
     use tokio::task::spawn_blocking;
@@ -267,6 +271,20 @@ pub async fn run_ipc_server() -> Result<()> {
     };
     use winapi::um::errhandlingapi::GetLastError;
     use winapi::shared::winerror::ERROR_PIPE_CONNECTED;
+    use winapi::um::securitybaseapi::{InitializeSecurityDescriptor, SetSecurityDescriptorDacl, AllocateAndInitializeSid, FreeSid};
+    use winapi::um::aclapi::SetEntriesInAclW;
+    use winapi::um::accctrl::{
+        EXPLICIT_ACCESS_W, SET_ACCESS, TRUSTEE_W, 
+        TRUSTEE_IS_SID, TRUSTEE_IS_WELL_KNOWN_GROUP
+    };
+    use winapi::um::winnt::{
+        SECURITY_DESCRIPTOR, SECURITY_DESCRIPTOR_REVISION, GENERIC_ALL,
+        SID_IDENTIFIER_AUTHORITY, SECURITY_WORLD_SID_AUTHORITY,
+        SECURITY_WORLD_RID, PSID
+    };
+    use winapi::um::winbase::LocalFree;
+    use winapi::um::minwinbase::SECURITY_ATTRIBUTES;
+    use std::mem;
 
     info!("正在启动IPC服务器 (Windows) - {}", IPC_SOCKET_NAME);
     
@@ -276,21 +294,116 @@ pub async fn run_ipc_server() -> Result<()> {
     loop {
         // 创建命名管道
         let pipe_handle = unsafe {
+            // 创建一个安全描述符以及所有用户都能访问的ACL
+            let mut sd: SECURITY_DESCRIPTOR = mem::zeroed();
+            let mut everyone_sid: PSID = ptr::null_mut();
+            let mut acl = ptr::null_mut();
+            
+            // 初始化安全描述符
+            if InitializeSecurityDescriptor(
+                &mut sd as *mut SECURITY_DESCRIPTOR as *mut _, 
+                SECURITY_DESCRIPTOR_REVISION
+            ) == 0 {
+                let error = GetLastError();
+                error!("初始化安全描述符失败: {}", error);
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                continue;
+            }
+            
+            // 创建Everyone SID
+            let mut sia = SID_IDENTIFIER_AUTHORITY { Value: SECURITY_WORLD_SID_AUTHORITY };
+            
+            if AllocateAndInitializeSid(
+                &mut sia as *mut SID_IDENTIFIER_AUTHORITY,
+                1,
+                SECURITY_WORLD_RID,
+                0, 0, 0, 0, 0, 0, 0,
+                &mut everyone_sid
+            ) == 0 {
+                let error = GetLastError();
+                error!("创建Everyone SID失败: {}", error);
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                continue;
+            }
+            
+            // 设置允许Everyone组完全访问的访问控制项
+            let mut ea = EXPLICIT_ACCESS_W {
+                grfAccessPermissions: GENERIC_ALL,
+                grfAccessMode: SET_ACCESS,
+                grfInheritance: 0,
+                Trustee: TRUSTEE_W {
+                    pMultipleTrustee: ptr::null_mut(),
+                    MultipleTrusteeOperation: 0,
+                    TrusteeForm: TRUSTEE_IS_SID,
+                    TrusteeType: TRUSTEE_IS_WELL_KNOWN_GROUP,
+                    ptstrName: everyone_sid as *mut _
+                }
+            };
+            
+            // 创建访问控制列表
+            let result = SetEntriesInAclW(
+                1,
+                &mut ea as *mut EXPLICIT_ACCESS_W,
+                ptr::null_mut(),
+                &mut acl
+            );
+            
+            if result != 0 {
+                error!("创建ACL失败: {}", result);
+                FreeSid(everyone_sid);
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                continue;
+            }
+            
+            // 将ACL设置到安全描述符
+            if SetSecurityDescriptorDacl(
+                &mut sd as *mut SECURITY_DESCRIPTOR as *mut _,
+                1, 
+                acl, 
+                0
+            ) == 0 {
+                let error = GetLastError();
+                error!("设置安全描述符DACL失败: {}", error);
+                LocalFree(acl as *mut _);
+                FreeSid(everyone_sid);
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                continue;
+            }
+            
+            // 创建安全属性结构体
+            let mut sa = SECURITY_ATTRIBUTES {
+                nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
+                lpSecurityDescriptor: &mut sd as *mut SECURITY_DESCRIPTOR as *mut _,
+                bInheritHandle: 0
+            };
+            
+            // 创建命名管道
             let wide_name: Vec<u16> = OsStr::new(IPC_SOCKET_NAME)
                 .encode_wide()
                 .chain(Some(0))
                 .collect();
             
-            CreateNamedPipeW(
+            let handle = CreateNamedPipeW(
                 wide_name.as_ptr(),
-                PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED,  // 添加OVERLAPPED标志以支持异步
+                PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED,
                 PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS,
                 PIPE_UNLIMITED_INSTANCES,
                 4096,  // 输出缓冲区大小
                 4096,  // 输入缓冲区大小
                 0,     // 默认超时
-                ptr::null_mut(),
-            )
+                &mut sa
+            );
+            
+            // 清理资源
+            if !acl.is_null() {
+                LocalFree(acl as *mut _);
+            }
+            
+            if !everyone_sid.is_null() {
+                FreeSid(everyone_sid);
+            }
+            
+            handle
         };
         
         if pipe_handle == INVALID_HANDLE_VALUE {

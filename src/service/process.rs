@@ -71,14 +71,14 @@ pub fn spawn_process_debug(command: &str, args: &[&str]) -> io::Result<(u32, Str
 
 #[cfg(target_os = "windows")]
 pub fn kill_process(pid: u32) -> io::Result<()> {
-    let taskkill_args = &["/F", "/PID", &pid.to_string()];
+    let taskkill_args = &["/PID", &pid.to_string()];
     Command::new("taskkill").args(taskkill_args).output()?;
     Ok(())
 }
 
 #[cfg(not(target_os = "windows"))]
 pub fn kill_process(pid: u32) -> io::Result<()> {
-    let kill_args = &["-9", &pid.to_string()];
+    let kill_args = &["-2", &pid.to_string()];
     let output: Output = Command::new("kill").args(kill_args).output()?;
 
     if output.status.success() {

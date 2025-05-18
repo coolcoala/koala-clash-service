@@ -1,11 +1,12 @@
 use crate::service::data::*;
 use crate::service::core::COREMANAGER;
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result};
 use hmac::{Hmac, Mac};
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
 use sha2::digest::Digest;
 use std::time::{SystemTime, UNIX_EPOCH};
+use log::{info, error, debug};
 #[cfg(target_os = "windows")]
 use std::os::windows::ffi::OsStrExt;
 #[cfg(target_os = "windows")]
@@ -227,7 +228,7 @@ pub async fn handle_request(request: IpcRequest) -> Result<IpcResponse> {
         }
         
         IpcCommand::StopClash => {
-            match COREMANAGER.lock().unwrap().stop_mihomo() {
+            match COREMANAGER.lock().unwrap().stop_clash() {
                 Ok(_) => {
                     let json_response = serde_json::json!({
                         "code": 0,
@@ -250,7 +251,6 @@ pub async fn handle_request(request: IpcRequest) -> Result<IpcResponse> {
 
 #[cfg(target_os = "windows")]
 pub async fn run_ipc_server() -> Result<()> {
-    use log::{info, error, debug};
     use std::io::{Read, Write};
     use std::fs::File;
     use tokio::task::spawn_blocking;
@@ -498,7 +498,6 @@ pub async fn run_ipc_server() -> Result<()> {
 #[cfg(target_family = "unix")]
 pub async fn run_ipc_server() -> Result<()> {
     use std::os::unix::net::UnixListener;
-    use log::{info, error, warn};
     use tokio::runtime::Runtime;
 
     info!("正在启动IPC服务器 (Unix) - {}", IPC_SOCKET_NAME);
@@ -506,7 +505,7 @@ pub async fn run_ipc_server() -> Result<()> {
     if std::path::Path::new(IPC_SOCKET_NAME).exists() {
         info!("发现旧的套接字文件，正在删除: {}", IPC_SOCKET_NAME);
         if let Err(e) = std::fs::remove_file(IPC_SOCKET_NAME) {
-            warn!("删除旧套接字文件失败: {}，继续尝试创建新套接字", e);
+            error!("删除旧套接字文件失败: {}，继续尝试创建新套接字", e);
         }
     }
 
@@ -543,7 +542,7 @@ pub async fn run_ipc_server() -> Result<()> {
 
                 #[cfg(any(target_os = "linux", target_os = "macos"))]
                 if err.to_string().contains("Permission denied") {
-                    warn!("检测到权限错误，尝试修复套接字权限");
+                    error!("检测到权限错误，尝试修复套接字权限");
                     if let Err(e) = set_socket_permissions() {
                         error!("修复套接字权限失败: {}", e);
                     }
@@ -560,7 +559,6 @@ pub async fn run_ipc_server() -> Result<()> {
 fn set_socket_permissions() -> Result<()> {
     use std::os::unix::fs::PermissionsExt;
     use std::process::Command;
-    use log::{info, warn, error, debug};
     
     info!("设置套接字文件权限为全局可读写");
 
@@ -581,23 +579,23 @@ fn set_socket_permissions() -> Result<()> {
                         if new_mode == 0o666 {
                             success = true;
                         } else {
-                            warn!("套接字权限设置可能未生效，应为666，实际为{:o}", new_mode);
+                            error!("套接字权限设置可能未生效，应为666，实际为{:o}", new_mode);
                         }
                     }
                 },
                 Err(e) => {
-                    warn!("使用Rust API设置套接字文件权限失败: {}", e);
+                    error!("使用Rust API设置套接字文件权限失败: {}", e);
                 }
             }
         },
         Err(e) => {
-            warn!("获取套接字文件元数据失败: {}", e);
+            error!("获取套接字文件元数据失败: {}", e);
         }
     }
     
     // 方法2：
     if !success {
-        warn!("使用系统chmod命令设置套接字权限");
+        error!("使用系统chmod命令设置套接字权限");
         match Command::new("chmod")
             .args(&["666", IPC_SOCKET_NAME])
             .output() 
@@ -608,11 +606,11 @@ fn set_socket_permissions() -> Result<()> {
                     success = true;
                 } else {
                     let stderr = String::from_utf8_lossy(&output.stderr);
-                    warn!("chmod命令失败: {}", stderr);
+                    error!("chmod命令失败: {}", stderr);
                 }
             },
             Err(e) => {
-                warn!("执行chmod命令失败: {}", e);
+                error!("执行chmod命令失败: {}", e);
             }
         }
     }

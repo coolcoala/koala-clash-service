@@ -4,7 +4,11 @@ use super::{
 };
 use anyhow::{anyhow, Context, Result};
 use once_cell::sync::Lazy;
-use std::sync::{atomic::Ordering, Arc, Mutex};
+use std::{
+    sync::{atomic::Ordering, Arc, Mutex},
+    fs::File,
+};
+use log::{info, error};
 
 impl CoreManager {
     pub fn new() -> Self {
@@ -34,10 +38,8 @@ impl CoreManager {
         let config_file = config.config_file.as_str();
         let args = vec!["-d", config_dir, "-f", config_file, "-t"];
 
-        println!(
-            "Testing config file with bin_path: {}, config_dir: {}, config_file: {}",
-            bin_path, config_dir, config_file
-        );
+        info!("正在测试配置文件: bin_path: {}, config_dir: {}, config_file: {}", 
+            bin_path, config_dir, config_file);
 
         let result = process::spawn_process_debug(bin_path, &args)
             .map_err(|e| format!("Failed to execute config test: {}", e))?;
@@ -61,15 +63,13 @@ impl CoreManager {
             return Err(errors.join("\n"));
         }
 
-        println!("Config test passed successfully");
+        info!("配置测试通过");
         Ok(())
     }
-}
 
-impl CoreManager {
     pub fn get_version(&self) -> Result<VersionResponse> {
         let current_pid = std::process::id() as i32;
-        println!("Current PID: {}", current_pid);
+        info!("服务当前PID: {}", current_pid);
         
         Ok(VersionResponse {
             service: "Clash Verge Service".into(),
@@ -94,129 +94,91 @@ impl CoreManager {
     }
 
     pub fn start_mihomo(&self) -> Result<()> {
-        println!("Starting mihomo with config");
+        info!("正在启动mihomo");
 
-        {
-            let is_running_mihomo = self
-                .mihomo_status
-                .inner
-                .lock()
-                .unwrap()
-                .is_running
-                .load(Ordering::Relaxed);
-            let mihomo_running_pid = self
-                .mihomo_status
-                .inner
-                .lock()
-                .unwrap()
-                .running_pid
-                .load(Ordering::Relaxed);
-
-            if is_running_mihomo && mihomo_running_pid > 0 {
-                println!("Mihomo is already running, stopping it first");
-                let _ = self.stop_mihomo();
-                println!("Mihomo stopped successfully");
-            }
-        }
-
-        // 检测并停止系统中其他可能运行的verge-mihomo进程
+        // 确保先停止已运行的mihomo进程
+        let _ = self.stop_mihomo();
+        
+        // 停止系统中其他可能运行的verge-mihomo进程
         self.stop_other_mihomo_processes()?;
 
+        // Get runtime config
+        let config = match self
+            .clash_status
+            .inner
+            .lock()
+            .unwrap()
+            .runtime_config
+            .lock()
+            .unwrap()
+            .clone()
         {
-            // Get runtime config
-            let config = self
-                .clash_status
-                .inner
-                .lock()
-                .unwrap()
-                .runtime_config
-                .lock()
-                .unwrap()
-                .clone();
-            let config = config.ok_or(anyhow!("Runtime config is not set"))?;
+            Some(config) => config,
+            None => return Err(anyhow!("Runtime config is not set")),
+        };
 
-            let bin_path = config.bin_path.as_str();
-            let config_dir = config.config_dir.as_str();
-            let config_file = config.config_file.as_str();
-            let log_file = config.log_file.as_str();
-            let args = vec!["-d", config_dir, "-f", config_file];
+        let bin_path = config.bin_path.as_str();
+        let config_dir = config.config_dir.as_str();
+        let config_file = config.config_file.as_str();
+        let log_file = config.log_file.as_str();
+        let args = vec!["-d", config_dir, "-f", config_file];
 
-            println!(
-                "Starting mihomo with bin_path: {}, config_dir: {}, config_file: {}, log_file: {}",
-                bin_path, config_dir, config_file, log_file
-            );
+        info!("正在启动mihomo: {} -d {} -f {}", bin_path, config_dir, config_file);
 
-            // Open log file
-            let log = std::fs::File::create(log_file)
-                .with_context(|| format!("Failed to open log file: {}", log_file))?;
+        // Open log file
+        let log = File::options()
+            .create(true)
+            .append(true)
+            .open(log_file)
+            .with_context(|| format!("Failed to open log file: {}", log_file))?;
 
-            // Spawn process
-            let pid = process::spawn_process(bin_path, &args, log)?;
-            println!("Mihomo started with PID: {}", pid);
+        // Spawn process
+        let pid = process::spawn_process(bin_path, &args, log)?;
 
-            // Update mihomo status
-            self.mihomo_status
-                .inner
-                .lock()
-                .unwrap()
-                .running_pid
-                .store(pid as i32, Ordering::Relaxed);
-            self.mihomo_status
-                .inner
-                .lock()
-                .unwrap()
-                .is_running
-                .store(true, Ordering::Relaxed);
-            println!("Mihomo started successfully with PID: {}", pid);
-        }
-
+        // Update mihomo status
+        let mihomo_status = self.mihomo_status.inner.lock().unwrap();
+        mihomo_status.running_pid.store(pid as i32, Ordering::Relaxed);
+        mihomo_status.is_running.store(true, Ordering::Relaxed);
+        
+        info!("Mihomo启动成功，PID: {}", pid);
         Ok(())
     }
 
     pub fn stop_mihomo(&self) -> Result<()> {
-        let mihomo_pid = self
-            .mihomo_status
-            .inner
-            .lock()
-            .unwrap()
-            .running_pid
-            .load(Ordering::Relaxed);
+        // 获取mihomo状态信息
+        let mihomo_status = self.mihomo_status.inner.lock().unwrap();
+        let mihomo_pid = mihomo_status.running_pid.load(Ordering::Relaxed);
+        
         if mihomo_pid <= 0 {
-            println!("No running mihomo process found");
+            info!("未找到运行中的mihomo进程");
             return Ok(());
         }
-        println!("Stopping mihomo process {}", mihomo_pid);
+        info!("正在停止mihomo进程 {}", mihomo_pid);
 
+        // 尝试终止进程
         let result = super::process::kill_process(mihomo_pid as u32)
             .with_context(|| format!("Failed to kill mihomo process with PID: {}", mihomo_pid));
 
+        // 无论终止结果如何，都更新状态
+        mihomo_status.running_pid.store(-1, Ordering::Relaxed);
+        mihomo_status.is_running.store(false, Ordering::Relaxed);
+        
+        // 记录结果
         match result {
             Ok(_) => {
-                println!("Mihomo process {} stopped successfully", mihomo_pid);
+                info!("Mihomo进程 {} 已成功停止", mihomo_pid);
             }
             Err(e) => {
-                eprintln!("Error killing mihomo process: {}", e);
+                error!("终止Mihomo进程时出错: {}", e);
             }
         }
-
-        self.mihomo_status
-            .inner
-            .lock()
-            .unwrap()
-            .running_pid
-            .store(-1, Ordering::Relaxed);
-        self.mihomo_status
-            .inner
-            .lock()
-            .unwrap()
-            .is_running
-            .store(false, Ordering::Relaxed);
+        
         Ok(())
     }
 
     // 检测并停止其他verge-mihomo进程
     pub fn stop_other_mihomo_processes(&self) -> Result<()> {
-        // 获取当前进程的PID
+        // 获取当前进程的PID和已跟踪的mihomo PID
         let current_pid = std::process::id();
         let tracked_mihomo_pid = self
             .mihomo_status
@@ -225,144 +187,102 @@ impl CoreManager {
             .unwrap()
             .running_pid
             .load(Ordering::Relaxed) as u32;
+
+        let process_result = process::find_processes("verge-mihomo");
+        if let Err(e) = &process_result {
+            error!("查找verge-mihomo进程出错: {}", e);
+            return Ok(());
+        }
         
-        match process::find_processes("verge-mihomo") {
-            Ok(pids) => {
-                // 直接在迭代过程中过滤和终止
-                let kill_count = pids.into_iter()
-                    .filter(|&pid| pid != current_pid && (tracked_mihomo_pid <= 0 || pid != tracked_mihomo_pid))
-                    .map(|pid| {
-                        println!("Found other verge-mihomo process with PID: {}, stopping it", pid);
-                        match process::kill_process(pid) {
-                            Ok(_) => {
-                                println!("Successfully stopped verge-mihomo process {}", pid);
-                                true
-                            }
-                            Err(e) => {
-                                eprintln!("Failed to kill verge-mihomo process {}: {}", pid, e);
-                                false
-                            }
-                        }
-                    })
-                    .filter(|&success| success)
-                    .count();
-                    
-                println!("Successfully stopped {} verge-mihomo processes", kill_count);
-            }
-            Err(e) => {
-                eprintln!("Error finding verge-mihomo processes: {}", e);
-            }
+        let pids = process_result.unwrap();
+        if pids.is_empty() {
+            return Ok(());
+        }
+        
+        // 过滤并终止进程
+        let kill_count = pids.into_iter()
+            .filter(|&pid| pid != current_pid && (tracked_mihomo_pid <= 0 || pid != tracked_mihomo_pid))
+            .map(|pid| {
+                info!("正在停止其他verge-mihomo进程: {}", pid);
+                match process::kill_process(pid) {
+                    Ok(_) => true,
+                    Err(e) => {
+                        error!("终止进程 {} 失败: {}", pid, e);
+                        false
+                    }
+                }
+            })
+            .filter(|&success| success)
+            .count();
+            
+        if kill_count > 0 {    
+            info!("已停止 {} 个verge-mihomo进程", kill_count);
         }
         
         Ok(())
     }
 
     pub fn start_clash(&self, body: StartBody) -> Result<(), String> {
+        // 设置配置并测试
         {
-            // Check clash & stop if needed
-            let is_running_clash = self
-                .clash_status
-                .inner
-                .lock()
-                .unwrap()
-                .is_running
-                .load(Ordering::Relaxed);
-            let clash_running_pid = self
-                .clash_status
-                .inner
-                .lock()
-                .unwrap()
-                .running_pid
-                .load(Ordering::Relaxed);
-            let current_pid = std::process::id() as i32;
-
-            if is_running_clash && clash_running_pid == current_pid {
-                println!("Clash is already running with pid: {}", current_pid);
-            }
-            if !is_running_clash && clash_running_pid <= 0 {
-                let current_pid = std::process::id() as i32;
-                println!("Clash is start running with pid: {}", current_pid);
-                self.clash_status
-                    .inner
-                    .lock()
-                    .unwrap()
-                    .running_pid
-                    .store(current_pid, Ordering::Relaxed);
-                self.clash_status
-                    .inner
-                    .lock()
-                    .unwrap()
-                    .is_running
-                    .store(true, Ordering::Relaxed);
-                println!("done");
-            }
-        }
-
-        {
-            println!("Setting clash runtime config with config: {:?}", body);
+            info!("设置Clash运行时配置: {:?}", body);
             self.clash_status.inner.lock().unwrap().runtime_config =
                 Arc::new(Mutex::new(Some(body.clone())));
-            println!("Testing config file");
+            info!("正在测试配置文件");
             self.test_config_file()?;
         }
 
-        {
-            // Check mihomo & stop if needed
-            println!("Checking if mihomo is running before start clash");
-            let is_mihomo_running = self
-                .mihomo_status
-                .inner
-                .lock()
-                .unwrap()
-                .is_running
-                .load(Ordering::Relaxed);
-            let mihomo_running_pid = self
-                .mihomo_status
-                .inner
-                .lock()
-                .unwrap()
-                .running_pid
-                .load(Ordering::Relaxed);
-
-            if is_mihomo_running && mihomo_running_pid > 0 {
-                println!("Mihomo is running, stopping it first");
-                let _ = self.stop_mihomo();
-                let _ = self.start_mihomo();
-            } else {
-                println!("Mihomo is not running, starting it");
-                let _ = self.start_mihomo();
-            }
+        // 不管mihomo当前状态如何，确保先停止所有实例，然后重新启动
+        let _ = self.stop_mihomo();
+        
+        // 启动mihomo
+        if let Err(e) = self.start_mihomo() {
+            error!("启动mihomo失败: {}", e);
+            return Err(format!("Failed to start mihomo: {}", e));
         }
-
-        println!("Clash started successfully");
-        Ok(())
-    }
-
-    pub fn stop_clash(&self) -> Result<()> {
-        let clash_pid = self
-            .clash_status
+        
+        // 获取mihomo的PID并更新clash状态
+        let mihomo_pid = self
+            .mihomo_status
             .inner
             .lock()
             .unwrap()
             .running_pid
             .load(Ordering::Relaxed);
-        if clash_pid <= 0 {
-            println!("No running clash process found");
-            return Ok(());
+            
+        if mihomo_pid > 0 {
+            // 将mihomo的PID同时记录为clash的PID
+            self.clash_status
+                .inner
+                .lock()
+                .unwrap()
+                .running_pid
+                .store(mihomo_pid, Ordering::Relaxed);
+            self.clash_status
+                .inner
+                .lock()
+                .unwrap()
+                .is_running
+                .store(true, Ordering::Relaxed);
+            info!("Clash正在使用mihomo进程，PID: {}", mihomo_pid);
+        } else {
+            return Err("Failed to get mihomo pid for clash".to_string());
         }
-        println!("Stopping clash process {}", clash_pid);
 
-        if let Err(e) = super::process::kill_process(clash_pid as u32)
-            .with_context(|| format!("Failed to kill clash process with PID: {}", clash_pid))
-        {
-            eprintln!("Error killing clash process: {}", e);
-        }
+        info!("Clash启动成功");
+        Ok(())
+    }
 
-        // 同时停止mihomo进程和其他verge-mihomo进程
+    pub fn stop_clash(&self) -> Result<()> {
+        info!("正在停止Clash");
+        
+        // 停止mihomo进程(实际上这就是clash使用的进程)
         let _ = self.stop_mihomo();
+        
+        // 确保所有其他verge-mihomo进程也被停止
         let _ = self.stop_other_mihomo_processes();
 
-        println!("Clash process {} stopped successfully", clash_pid);
+        info!("Clash已成功停止");
         Ok(())
     }
 }

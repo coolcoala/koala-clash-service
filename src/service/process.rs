@@ -3,7 +3,7 @@ use std::{
     process::{Command, Stdio},
 };
 
-use log::{info, error, debug};
+use log::{info, warn, error, debug};
 
 pub fn spawn_process(command: &str, args: &[&str], mut log: std::fs::File) -> io::Result<u32> {
     // Log the command being executed

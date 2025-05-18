@@ -132,7 +132,7 @@ fn create_signed_response(
 }
 
 /// 处理IPC请求
-pub async fn handle_request(request: IpcRequest) -> Result<IpcResponse> {
+pub fn handle_request(request: IpcRequest) -> Result<IpcResponse> {
     if !verify_request_signature(&request)? {
         return create_signed_response(
             &request.id, 
@@ -150,11 +150,25 @@ pub async fn handle_request(request: IpcRequest) -> Result<IpcResponse> {
             Some("请求时间戳无效或过期".to_string())
         );
     }
+
+    // 处理锁中毒
+    let core_manager = match COREMANAGER.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => {
+            error!("COREMANAGER mutex is poisoned: {}", poisoned);
+            return create_signed_response(
+                &request.id,
+                false,
+                None,
+                Some("内部服务器错误: 核心服务状态异常".to_string())
+            );
+        }
+    };
     
     // 处理命令
     match request.command {
         IpcCommand::GetClash => {
-            match COREMANAGER.lock().unwrap().get_clash_status() {
+            match core_manager.get_clash_status() {
                 Ok(data) => {
                     let json_response = serde_json::json!({
                         "code": 0,
@@ -175,7 +189,7 @@ pub async fn handle_request(request: IpcRequest) -> Result<IpcResponse> {
         }
         
         IpcCommand::GetVersion => {
-            match COREMANAGER.lock().unwrap().get_version() {
+            match core_manager.get_version() {
                 Ok(data) => {
                     let json_response = serde_json::json!({
                         "code": 0,
@@ -208,7 +222,7 @@ pub async fn handle_request(request: IpcRequest) -> Result<IpcResponse> {
                 }
             };
             
-            match COREMANAGER.lock().unwrap().start_clash(start_body) {
+            match core_manager.start_clash(start_body) {
                 Ok(_) => {
                     let json_response = serde_json::json!({
                         "code": 0,
@@ -228,7 +242,7 @@ pub async fn handle_request(request: IpcRequest) -> Result<IpcResponse> {
         }
         
         IpcCommand::StopClash => {
-            match COREMANAGER.lock().unwrap().stop_clash() {
+            match core_manager.stop_clash() {
                 Ok(_) => {
                     let json_response = serde_json::json!({
                         "code": 0,
@@ -254,8 +268,6 @@ pub async fn run_ipc_server() -> Result<()> {
     use std::io::{Read, Write};
     use std::fs::File;
     use tokio::task::spawn_blocking;
-    use tokio::runtime::Runtime;
-    use std::sync::Arc;
     
     // 导入必要的Windows API
     use winapi::um::namedpipeapi::{ConnectNamedPipe, CreateNamedPipeW};
@@ -287,9 +299,6 @@ pub async fn run_ipc_server() -> Result<()> {
     use std::mem;
 
     info!("正在启动IPC服务器 (Windows) - {}", IPC_SOCKET_NAME);
-    
-    let runtime = Runtime::new()?;
-    let runtime = Arc::new(runtime);
     
     loop {
         // 创建命名管道
@@ -432,9 +441,6 @@ pub async fn run_ipc_server() -> Result<()> {
         // 将Windows句柄转换为Rust File对象
         let mut pipe_file  = unsafe { File::from_raw_handle(pipe_handle as _) };
         
-        // 克隆运行时引用
-        let runtime_clone = runtime.clone();
-        
         // 使用spawn_blocking处理阻塞IO
         spawn_blocking(move || -> Result<()> {
             // 读取消息长度前缀
@@ -463,8 +469,8 @@ pub async fn run_ipc_server() -> Result<()> {
                 }
             };
             
-            // 处理请求（在运行时上下文中）
-            let response = runtime_clone.block_on(handle_request(request))?;
+            // 处理请求（不再需要运行时上下文中的 block_on）
+            let response = handle_request(request)?;
             
             // 发送响应
             let response_json = serde_json::to_string(&response)?;
@@ -498,7 +504,6 @@ pub async fn run_ipc_server() -> Result<()> {
 #[cfg(target_family = "unix")]
 pub async fn run_ipc_server() -> Result<()> {
     use std::os::unix::net::UnixListener;
-    use tokio::runtime::Runtime;
 
     info!("正在启动IPC服务器 (Unix) - {}", IPC_SOCKET_NAME);
 
@@ -517,8 +522,6 @@ pub async fn run_ipc_server() -> Result<()> {
         error!("无法设置套接字权限: {}", e);
     });
 
-    let rt = Runtime::new()?;
-
     listener.set_nonblocking(true)
         .context("设置非阻塞模式失败")?;
     
@@ -526,15 +529,14 @@ pub async fn run_ipc_server() -> Result<()> {
         match listener.accept() {
             Ok((stream, _addr)) => {
                 info!("接受到新的IPC连接");
-
-                rt.spawn(async move {
-                    if let Err(err) = handle_unix_connection(stream).await {
+                tokio::task::spawn_blocking(move || {
+                    if let Err(err) = handle_unix_connection_sync(stream) {
                         error!("处理Unix连接错误: {}", err);
                     }
                 });
             }
             Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                std::thread::sleep(std::time::Duration::from_millis(10));
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
                 continue;
             }
             Err(err) => {
@@ -548,7 +550,7 @@ pub async fn run_ipc_server() -> Result<()> {
                     }
                 }
 
-                std::thread::sleep(std::time::Duration::from_millis(100));
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
             }
         }
     }
@@ -627,7 +629,7 @@ fn set_socket_permissions() -> Result<()> {
 
 /// 处理Unix域套接字连接
 #[cfg(target_family = "unix")]
-async fn handle_unix_connection(mut stream: std::os::unix::net::UnixStream) -> Result<()> {
+fn handle_unix_connection_sync(mut stream: std::os::unix::net::UnixStream) -> Result<()> {
     use std::io::{Read, Write};
 
     stream.set_nonblocking(false)
@@ -645,7 +647,7 @@ async fn handle_unix_connection(mut stream: std::os::unix::net::UnixStream) -> R
     let request: IpcRequest = serde_json::from_slice(&request_bytes)
         .context("无法解析IPC请求")?;
 
-    let response = handle_request(request).await?;
+    let response = handle_request(request)?;
 
     let response_json = serde_json::to_string(&response)?;
     let response_bytes = response_json.as_bytes();

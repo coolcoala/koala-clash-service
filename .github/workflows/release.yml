@@ -23,10 +23,12 @@ jobs:
             target: aarch64-unknown-linux-gnu
           - os: ubuntu-latest
             target: armv7-unknown-linux-gnueabihf
-          - os: macos-latest
+          - os: macos-latest  # Apple Silicon
             target: aarch64-apple-darwin
-          - os: macos-latest
+            arch: arm64
+          - os: macos-13  # Intel macOS
             target: x86_64-apple-darwin
+            arch: x86_64
 
     runs-on: ${{ matrix.os }}
     steps:
@@ -43,9 +45,28 @@ jobs:
         if: matrix.os != 'ubuntu-latest'
         run: rustup target add ${{ matrix.target }}
 
+      # macOS 特定的交叉编译设置
+      - name: Setup macOS cross compilation
+        if: startsWith(matrix.os, 'macos')
+        run: |
+          echo "CARGO_TARGET_$(echo ${{ matrix.target }} | tr '[:lower:]' '[:upper:]' | tr '-' '_')_LINKER=clang" >> $GITHUB_ENV
+          echo "CC_$(echo ${{ matrix.target }} | tr '-' '_')=clang" >> $GITHUB_ENV
+          echo "CXX_$(echo ${{ matrix.target }} | tr '-' '_')=clang++" >> $GITHUB_ENV
+          
+          # 设置 SDK 路径
+          if [ "${{ matrix.target }}" = "x86_64-apple-darwin" ]; then
+            echo "SDKROOT=$(xcrun --sdk macosx --show-sdk-path)" >> $GITHUB_ENV
+            echo "MACOSX_DEPLOYMENT_TARGET=10.15" >> $GITHUB_ENV
+          elif [ "${{ matrix.target }}" = "aarch64-apple-darwin" ]; then
+            echo "SDKROOT=$(xcrun --sdk macosx --show-sdk-path)" >> $GITHUB_ENV
+            echo "MACOSX_DEPLOYMENT_TARGET=11.0" >> $GITHUB_ENV
+          fi
+
       - name: Build
         if: matrix.os != 'ubuntu-latest'
-        run: cargo build --release --target ${{ matrix.target }}
+        run: |
+          cargo clean
+          cargo build --release --target ${{ matrix.target }} --verbose
 
       - name: Build
         if: matrix.os == 'ubuntu-latest'
@@ -60,7 +81,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - name: CodeSign
-        if: matrix.os == 'macos-latest'
+        if: startsWith(matrix.os, 'macos')
         run: |
           # 设置证书
           echo "${{ secrets.APPLE_CERTIFICATE }}" | base64 --decode > cert.p12
@@ -70,6 +91,9 @@ jobs:
           security import cert.p12 -k github-actions.keychain -P "${{ secrets.APPLE_CERTIFICATE_PASSWORD }}" -T /usr/bin/codesign
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k github-actions github-actions.keychain
 
+          echo "签名前验证架构:"
+          file target/${{ matrix.target }}/release/install-service
+          lipo -info target/${{ matrix.target }}/release/install-service || true
 
           # 对服务程序进行签名
           codesign --force \

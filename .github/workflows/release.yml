@@ -124,7 +124,7 @@ jobs:
 
           # 验证签名
           codesign -dvv target/${{ matrix.target }}/release/clash-verge-service
-          codesign -d --entitlements :- target/${{ matrix.target }}/release/clash-verge-service
+          codesign -d --entitlements /dev/stdout target/${{ matrix.target }}/release/clash-verge-service
 
       - name: Release
         if: matrix.os == 'windows-latest'

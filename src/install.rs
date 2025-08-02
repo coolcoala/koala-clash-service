@@ -10,7 +10,7 @@ use anyhow::Error;
 
 #[cfg(target_os = "macos")]
 fn main() -> Result<(), Error> {
-    use clash_verge_service::utils::{run_command, uninstall_old_service};
+    use koala_clash_service::utils::{run_command, uninstall_old_service};
     use std::fs::File;
     use std::io::Write;
     use std::path::Path;
@@ -20,15 +20,15 @@ fn main() -> Result<(), Error> {
 
     let service_binary_path = env::current_exe()
         .unwrap()
-        .with_file_name("clash-verge-service");
+        .with_file_name("koala-clash-service");
 
     if !service_binary_path.exists() {
-        return Err(anyhow::anyhow!("clash-verge-service binary not found"));
+        return Err(anyhow::anyhow!("koala-clash-service binary not found"));
     }
 
     // 定义 bundle 路径
     let bundle_path =
-        "/Library/PrivilegedHelperTools/io.github.clash-verge-rev.clash-verge-rev.service.bundle";
+        "/Library/PrivilegedHelperTools/io.github.koala-clash.service.bundle";
     let contents_path = format!("{}/Contents", bundle_path);
     let macos_path = format!("{}/MacOS", contents_path);
 
@@ -37,7 +37,7 @@ fn main() -> Result<(), Error> {
         .map_err(|e| anyhow::anyhow!("Failed to create bundle directories: {}", e))?;
 
     // 复制二进制文件到 bundle 的 MacOS 目录
-    let target_binary_path = format!("{}/clash-verge-service", macos_path);
+    let target_binary_path = format!("{}/koala-clash-service", macos_path);
     std::fs::copy(&service_binary_path, &target_binary_path)
         .map_err(|e| anyhow::anyhow!("Failed to copy service file: {}", e))?;
 
@@ -57,7 +57,7 @@ fn main() -> Result<(), Error> {
 
     // 创建并写入 launchd plist
     let plist_file =
-        "/Library/LaunchDaemons/io.github.clash-verge-rev.clash-verge-rev.service.plist";
+        "/Library/LaunchDaemons/io.github.koala-clash.service.plist";
     let plist_file = Path::new(plist_file);
 
     let launchd_plist_content = include_str!("files/launchd.plist.tmpl");
@@ -88,7 +88,7 @@ fn main() -> Result<(), Error> {
         "launchctl",
         &[
             "enable",
-            "system/io.github.clash-verge-rev.clash-verge-rev.service",
+            "system/io.github.koala-clash.service",
         ],
         debug,
     );
@@ -104,7 +104,7 @@ fn main() -> Result<(), Error> {
     );
     let _ = run_command(
         "launchctl",
-        &["start", "io.github.clash-verge-rev.clash-verge-rev.service"],
+        &["start", "io.github.koala-clash.service"],
         debug,
     );
 
@@ -113,8 +113,8 @@ fn main() -> Result<(), Error> {
 
 #[cfg(target_os = "linux")]
 fn main() -> Result<(), Error> {
-    const SERVICE_NAME: &str = "clash-verge-service";
-    use clash_verge_service::utils::run_command;
+    const SERVICE_NAME: &str = "koala-clash-service";
+    use koala_clash_service::utils::run_command;
     use std::fs::File;
     use std::io::Write;
     use std::path::Path;
@@ -123,10 +123,10 @@ fn main() -> Result<(), Error> {
 
     let service_binary_path = env::current_exe()
         .unwrap()
-        .with_file_name("clash-verge-service");
+        .with_file_name("koala-clash-service");
 
     if !service_binary_path.exists() {
-        return Err(anyhow::anyhow!("clash-verge-service binary not found"));
+        return Err(anyhow::anyhow!("koala-clash-service binary not found"));
     }
 
     // Check service status
@@ -185,7 +185,7 @@ fn main() -> windows_service::Result<()> {
     let service_manager = ServiceManager::local_computer(None::<&str>, manager_access)?;
 
     let service_access = ServiceAccess::QUERY_STATUS | ServiceAccess::START;
-    if let Ok(service) = service_manager.open_service("clash_verge_service", service_access) {
+    if let Ok(service) = service_manager.open_service("koala_clash_service", service_access) {
         if let Ok(status) = service.query_status() {
             match status.current_state {
                 ServiceState::StopPending
@@ -203,16 +203,16 @@ fn main() -> windows_service::Result<()> {
 
     let service_binary_path = env::current_exe()
         .unwrap()
-        .with_file_name("clash-verge-service.exe");
+        .with_file_name("koala-clash-service.exe");
 
     if !service_binary_path.exists() {
-        eprintln!("clash-verge-service.exe not found");
+        eprintln!("koala-clash-service.exe not found");
         std::process::exit(2);
     }
 
     let service_info = ServiceInfo {
-        name: OsString::from("clash_verge_service"),
-        display_name: OsString::from("Clash Verge Service"),
+        name: OsString::from("koala_clash_service"),
+        display_name: OsString::from("Koala Clash Service"),
         service_type: ServiceType::OWN_PROCESS,
         start_type: ServiceStartType::AutoStart,
         error_control: ServiceErrorControl::Normal,
@@ -226,7 +226,7 @@ fn main() -> windows_service::Result<()> {
     let start_access = ServiceAccess::CHANGE_CONFIG | ServiceAccess::START;
     let service = service_manager.create_service(&service_info, start_access)?;
 
-    service.set_description("Clash Verge Service helps to launch clash core")?;
+    service.set_description("Koala Clash Service helps to launch clash core")?;
     service.start(&Vec::<&OsStr>::new())?;
 
     Ok(())

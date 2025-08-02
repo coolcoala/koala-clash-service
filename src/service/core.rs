@@ -72,7 +72,7 @@ impl CoreManager {
         info!("服务当前PID: {}", current_pid);
         
         Ok(VersionResponse {
-            service: "Clash Verge Service".into(),
+            service: "koala-clash Service".into(),
             version: env!("CARGO_PKG_VERSION").into(),
         })
     }

@@ -8,7 +8,7 @@ use tokio::runtime::Runtime;
 use log::{info, error};
 
 #[cfg(target_os = "macos")]
-use clash_verge_service::utils;
+use koala_clash_service::utils;
 #[cfg(windows)]
 use std::{ffi::OsString, time::Duration};
 #[cfg(windows)]
@@ -25,7 +25,7 @@ use windows_service::{
 #[cfg(windows)]
 const SERVICE_TYPE: ServiceType = ServiceType::OWN_PROCESS;
 #[cfg(not(target_os = "macos"))]
-const SERVICE_NAME: &str = "clash_verge_service";
+const SERVICE_NAME: &str = "koala_clash_service";
 
 /// 运行IPC服务
 pub async fn run_service() -> anyhow::Result<()> {
@@ -51,7 +51,7 @@ pub async fn run_service() -> anyhow::Result<()> {
         process_id: None,
     })?;
 
-    info!("启动Clash Verge服务 - IPC模式");
+    info!("启动Koala Clash服务 - IPC模式");
     
     // 直接运行IPC服务器
     if let Err(err) = run_ipc_server().await {
@@ -81,7 +81,7 @@ fn stop_service() -> Result<()> {
 }
 #[cfg(target_os = "linux")]
 fn stop_service() -> anyhow::Result<()> {
-    // systemctl stop clash_verge_service
+    // systemctl stop koala_clash_service
     std::process::Command::new("systemctl")
         .arg("stop")
         .arg(SERVICE_NAME)
@@ -92,10 +92,10 @@ fn stop_service() -> anyhow::Result<()> {
 
 #[cfg(target_os = "macos")]
 fn stop_service() -> anyhow::Result<()> {
-    // launchctl stop clash_verge_service
+    // launchctl stop koala_clash_service
     let _ = utils::run_command(
         "launchctl",
-        &["stop", "io.github.clash-verge-rev.clash-verge-rev.service"],
+        &["stop", "io.github.koala-clash.service"],
         true,
     );
 

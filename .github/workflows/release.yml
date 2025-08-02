@@ -101,8 +101,8 @@ jobs:
             --keychain github-actions.keychain \
             --options runtime \
             --timestamp \
-            --identifier "io.github.clash-verge-rev.clash-verge-rev.service" \
-            target/${{ matrix.target }}/release/clash-verge-service
+            --identifier "io.github.koala-clash.service" \
+            target/${{ matrix.target }}/release/koala-clash-service
 
           # 对安装程序进行签名
           codesign --force \
@@ -110,7 +110,7 @@ jobs:
             --keychain github-actions.keychain \
             --options runtime \
             --timestamp \
-            --identifier "io.github.clash-verge-rev.clash-verge-rev.service.install" \
+            --identifier "io.github.koala-clash.service.install" \
             target/${{ matrix.target }}/release/install-service
 
           # 对卸载程序进行签名
@@ -119,12 +119,12 @@ jobs:
             --keychain github-actions.keychain \
             --options runtime \
             --timestamp \
-            --identifier "io.github.clash-verge-rev.clash-verge-rev.service.uninstall" \
+            --identifier "io.github.koala-clash.service.uninstall" \
             target/${{ matrix.target }}/release/uninstall-service
 
           # 验证签名
-          codesign -dvv target/${{ matrix.target }}/release/clash-verge-service
-          codesign -d --entitlements /dev/stdout target/${{ matrix.target }}/release/clash-verge-service
+          codesign -dvv target/${{ matrix.target }}/release/koala-clash-service
+          codesign -d --entitlements /dev/stdout target/${{ matrix.target }}/release/koala-clash-service
 
       - name: Release
         if: matrix.os == 'windows-latest'
@@ -134,7 +134,7 @@ jobs:
           tag_name: ${{ matrix.target }}
           token: ${{ secrets.GITHUB_TOKEN }}
           files: |
-            target/${{ matrix.target }}/release/clash-verge-service.exe
+            target/${{ matrix.target }}/release/koala-clash-service.exe
             target/${{ matrix.target }}/release/install-service.exe
             target/${{ matrix.target }}/release/uninstall-service.exe
 
@@ -146,6 +146,6 @@ jobs:
           tag_name: ${{ matrix.target }}
           token: ${{ secrets.GITHUB_TOKEN }}
           files: |
-            target/${{ matrix.target }}/release/clash-verge-service
+            target/${{ matrix.target }}/release/koala-clash-service
             target/${{ matrix.target }}/release/install-service
             target/${{ matrix.target }}/release/uninstall-service

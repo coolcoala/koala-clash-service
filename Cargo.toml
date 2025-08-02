@@ -1,13 +1,13 @@
 [package]
-name = "clash-verge-service"
+name = "koala-clash-service"
 version = "1.1.0"
 edition = "2021"
-authors = ["zzzgydi", "Clash Verge Rev Team"]
+authors = ["zzzgydi", "Clash Verge Rev Team", "coolcoala"]
 license = "GPL-3.0"
 repository = "https://github.com/zzzgydi/clash-verge-service.git"
 
 [[bin]]
-name = "clash-verge-service"
+name = "koala-clash-service"
 path = "src/main.rs"
 
 [[bin]]

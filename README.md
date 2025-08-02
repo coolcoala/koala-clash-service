@@ -1,3 +1,3 @@
-# Clash Verge Service
+# Koala Clash Service
 
 A Windows Service.

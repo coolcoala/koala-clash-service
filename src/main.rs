@@ -20,7 +20,7 @@ fn setup_logger() -> Result<(), Box<dyn std::error::Error>> {
 
     let exe_path = std::env::current_exe()?;
     let service_dir = exe_path.parent().unwrap_or(Path::new("."));
-    let log_path = service_dir.join("clash-verge-service.log");
+    let log_path = service_dir.join("koala-clash-service.log");
 
     let logfile = FileAppender::builder()
         .encoder(Box::new(PatternEncoder::new("[{d(%Y-%m-%d %H:%M:%S)}][{l}] {m}\n")))
@@ -46,7 +46,7 @@ fn main() -> windows_service::Result<()> {
         eprintln!("日志初始化失败: {}", e);
     }
     
-    info!("Starting Clash Verge Service");
+    info!("Starting Koala Clash Service");
     service::main()
 }
 
@@ -58,6 +58,6 @@ fn main() {
         eprintln!("日志初始化失败: {}", e);
     }
     
-    info!("Starting Clash Verge Service");
+    info!("Starting Koala Clash Service");
     service::main();
 }

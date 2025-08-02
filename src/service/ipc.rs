@@ -18,9 +18,9 @@ use std::ffi::OsStr;
 
 /// IPC通信常量
 const IPC_SOCKET_NAME: &str = if cfg!(windows) {
-    r"\\.\pipe\clash-verge-service"
+    r"\\.\pipe\koala-clash-service"
 } else {
-    "/tmp/clash-verge-service.sock"
+    "/tmp/koala-clash-service.sock"
 };
 
 /// 消息时间有效期(秒)
@@ -56,7 +56,7 @@ pub struct IpcResponse {
 
 /// todo - 必须与客户端使用相同的方法
 fn derive_secret_key() -> Vec<u8> {
-    let unique_app_id = "clash-verge-app-secret-fuck-me-until-daylight";
+    let unique_app_id = "koala-clash-app-secret-fuck-me-until-daylight";
     let mut hasher = Sha256::new();
     hasher.update(unique_app_id.as_bytes());
     hasher.finalize().to_vec()
